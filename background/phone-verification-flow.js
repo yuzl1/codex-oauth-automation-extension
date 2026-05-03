@@ -388,6 +388,14 @@
       return /tried\s+to\s+resend\s+too\s+many\s+times|please\s+try\s+again\s+later|too\s+many\s+resend|resend\s+too\s+many|发送.*过于频繁|稍后再试/i.test(message);
     }
 
+    function isPhoneActivationCancelledError(error) {
+      const message = String(error?.message || error || '').trim();
+      if (!message) {
+        return false;
+      }
+      return /activation\s+was\s+cancelled\s+before\s+the\s+sms\s+arrived/i.test(message);
+    }
+
     function buildPhoneRestartStep7Error(phoneNumber = '') {
       const suffix = phoneNumber ? ` Current number: ${phoneNumber}.` : '';
       return new Error(
@@ -1373,6 +1381,17 @@
           };
         } catch (error) {
           if (!isPhoneCodeTimeoutError(error)) {
+            if (isPhoneActivationCancelledError(error)) {
+              await addLog(
+                `Step 9: ${PHONE_SMS_PROVIDER_NAME} cancelled activation ${normalizedActivation.activationId} for ${normalizedActivation.phoneNumber} before SMS arrival, replacing number immediately.`,
+                'warn'
+              );
+              return {
+                code: '',
+                replaceNumber: true,
+                reason: 'activation_cancelled',
+              };
+            }
             throw error;
           }
 
