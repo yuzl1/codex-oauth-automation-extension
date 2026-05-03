@@ -5,12 +5,13 @@ const fs = require('node:fs');
 const source = fs.readFileSync('background/phone-verification-flow.js', 'utf8');
 const globalScope = {};
 const api = new Function('self', `${source}; return self.MultiPageBackgroundPhoneVerification;`)(globalScope);
+const PRICE_ACTION = 'getPricesV3';
 
 function buildHeroSmsPricesPayload({ country = '52', service = 'dr', cost = 0.08, count = 25370, physicalCount = 14528 } = {}) {
   return JSON.stringify({
     [country]: {
       [service]: {
-        cost,
+        price: cost,
         count,
         physicalCount,
       },
@@ -41,7 +42,7 @@ test('phone verification helper requests HeroSMS numbers with fixed OpenAI and T
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload(),
@@ -71,7 +72,7 @@ test('phone verification helper requests HeroSMS numbers with fixed OpenAI and T
     maxUses: 3,
   });
   assert.equal(requests.length, 2);
-  assert.equal(requests[0].searchParams.get('action'), 'getPrices');
+  assert.equal(requests[0].searchParams.get('action'), PRICE_ACTION);
   assert.equal(requests[0].searchParams.get('service'), 'dr');
   assert.equal(requests[0].searchParams.get('country'), '52');
   assert.equal(requests[0].searchParams.get('api_key'), 'demo-key');
@@ -93,7 +94,7 @@ test('phone verification helper retries HeroSMS getPrices until it receives a us
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         getPricesAttempt += 1;
         return getPricesAttempt < 3
           ? {
@@ -123,9 +124,9 @@ test('phone verification helper retries HeroSMS getPrices until it receives a us
   await helpers.requestPhoneActivation({ heroSmsApiKey: 'demo-key' });
 
   assert.equal(requests.length, 4);
-  assert.equal(requests[0].searchParams.get('action'), 'getPrices');
-  assert.equal(requests[1].searchParams.get('action'), 'getPrices');
-  assert.equal(requests[2].searchParams.get('action'), 'getPrices');
+  assert.equal(requests[0].searchParams.get('action'), PRICE_ACTION);
+  assert.equal(requests[1].searchParams.get('action'), PRICE_ACTION);
+  assert.equal(requests[2].searchParams.get('action'), PRICE_ACTION);
   assert.equal(requests[3].searchParams.get('action'), 'getNumber');
   assert.equal(requests[3].searchParams.get('maxPrice'), '0.09');
   assert.equal(requests[3].searchParams.get('fixedPrice'), 'true');
@@ -141,7 +142,7 @@ test('phone verification helper falls back to plain getNumber only after HeroSMS
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         getPricesAttempt += 1;
         return {
           ok: true,
@@ -166,9 +167,9 @@ test('phone verification helper falls back to plain getNumber only after HeroSMS
   await helpers.requestPhoneActivation({ heroSmsApiKey: 'demo-key' });
 
   assert.equal(requests.length, 4);
-  assert.equal(requests[0].searchParams.get('action'), 'getPrices');
-  assert.equal(requests[1].searchParams.get('action'), 'getPrices');
-  assert.equal(requests[2].searchParams.get('action'), 'getPrices');
+  assert.equal(requests[0].searchParams.get('action'), PRICE_ACTION);
+  assert.equal(requests[1].searchParams.get('action'), PRICE_ACTION);
+  assert.equal(requests[2].searchParams.get('action'), PRICE_ACTION);
   assert.equal(requests[2].searchParams.get('service'), 'dr');
   assert.equal(requests[2].searchParams.get('country'), '52');
   assert.equal(requests[2].searchParams.get('api_key'), 'demo-key');
@@ -186,7 +187,7 @@ test('phone verification helper retries with HeroSMS getNumberV2 when getNumber 
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload({ country: '16' }),
@@ -229,10 +230,9 @@ test('phone verification helper retries with HeroSMS getNumberV2 when getNumber 
     countryId: 16,
     successfulUses: 0,
     maxUses: 3,
-    statusAction: 'getStatusV2',
   });
   assert.equal(requests.length, 3);
-  assert.equal(requests[0].searchParams.get('action'), 'getPrices');
+  assert.equal(requests[0].searchParams.get('action'), PRICE_ACTION);
   assert.equal(requests[0].searchParams.get('country'), '16');
   assert.equal(requests[1].searchParams.get('action'), 'getNumber');
   assert.equal(requests[1].searchParams.get('country'), '16');
@@ -255,7 +255,7 @@ test('phone verification helper applies ordered fallback countries when primary 
       const action = parsedUrl.searchParams.get('action');
       const country = parsedUrl.searchParams.get('country');
 
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => JSON.stringify({
@@ -298,10 +298,10 @@ test('phone verification helper applies ordered fallback countries when primary 
   assert.equal(activation.phoneNumber, '447955001122');
   const actionTrace = requests.map((requestUrl) => `${requestUrl.searchParams.get('action')}:${requestUrl.searchParams.get('country')}`);
   assert.deepStrictEqual(actionTrace, [
-    'getPrices:52',
+    `${PRICE_ACTION}:52`,
     'getNumber:52',
     'getNumberV2:52',
-    'getPrices:16',
+    `${PRICE_ACTION}:16`,
     'getNumber:16',
   ]);
 });
@@ -317,7 +317,7 @@ test('phone verification helper honors price-priority acquisition mode across se
       const action = parsedUrl.searchParams.get('action');
       const country = parsedUrl.searchParams.get('country');
 
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         const cost = country === '52' ? 0.08 : 0.05;
         return {
           ok: true,
@@ -359,8 +359,8 @@ test('phone verification helper honors price-priority acquisition mode across se
   assert.equal(activation.countryId, 16);
   const actionTrace = requests.map((requestUrl) => `${requestUrl.searchParams.get('action')}:${requestUrl.searchParams.get('country')}`);
   assert.deepStrictEqual(actionTrace, [
-    'getPrices:52',
-    'getPrices:16',
+    `${PRICE_ACTION}:52`,
+    `${PRICE_ACTION}:16`,
     'getNumber:16',
   ]);
 });
@@ -382,7 +382,7 @@ test('phone verification helper retries acquisition rounds when at least one cou
       const action = parsedUrl.searchParams.get('action');
       const country = parsedUrl.searchParams.get('country');
 
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         if (country === '52') {
           return {
             ok: true,
@@ -440,16 +440,16 @@ test('phone verification helper retries acquisition rounds when at least one cou
   assert.equal(sleeps.length, 1);
   assert.equal(sleeps[0], 2000);
   assert.equal(
-    logs.filter((entry) => String(entry.message || '').includes('HeroSMS acquiring phone number')).length >= 2,
+    logs.filter((entry) => String(entry.message || '').includes('SMSBower acquiring phone number')).length >= 2,
     true
   );
   assert.equal(
-    logs.some((entry) => String(entry.message || '').includes('HeroSMS has no available numbers (round 1/2); retrying')),
+    logs.some((entry) => String(entry.message || '').includes('SMSBower has no available numbers (round 1/2); retrying')),
     true
   );
 });
 
-test('phone verification helper uses HeroSMS getStatusV2 after acquiring a number via getNumberV2', async () => {
+test('phone verification helper uses getStatus after acquiring a number via getNumberV2', async () => {
   const requests = [];
   const stateUpdates = [];
   let currentState = {
@@ -469,7 +469,7 @@ test('phone verification helper uses HeroSMS getStatusV2 after acquiring a numbe
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload({ country: '16' }),
@@ -490,7 +490,7 @@ test('phone verification helper uses HeroSMS getStatusV2 after acquiring a numbe
           }),
         };
       }
-      if (action === 'getStatusV2') {
+      if (action === 'getStatus') {
         statusPollCount += 1;
         return {
           ok: true,
@@ -559,7 +559,6 @@ test('phone verification helper uses HeroSMS getStatusV2 after acquiring a numbe
         countryId: 16,
         successfulUses: 0,
         maxUses: 3,
-        statusAction: 'getStatusV2',
       },
       currentPhoneVerificationCode: '',
     },
@@ -575,7 +574,6 @@ test('phone verification helper uses HeroSMS getStatusV2 after acquiring a numbe
         countryId: 16,
         successfulUses: 1,
         maxUses: 3,
-        statusAction: 'getStatusV2',
       },
     },
     {
@@ -585,11 +583,11 @@ test('phone verification helper uses HeroSMS getStatusV2 after acquiring a numbe
   ]);
   const actions = requests.map((url) => url.searchParams.get('action'));
   assert.deepStrictEqual(actions, [
-    'getPrices',
+    PRICE_ACTION,
     'getNumber',
     'getNumberV2',
-    'getStatusV2',
-    'getStatusV2',
+    'getStatus',
+    'getStatus',
     'setStatus',
   ]);
 });
@@ -604,7 +602,7 @@ test('phone verification helper refreshes maxPrice when HeroSMS returns WRONG_MA
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload(),
@@ -643,7 +641,7 @@ test('phone verification helper refreshes maxPrice when HeroSMS returns WRONG_MA
     maxUses: 3,
   });
   assert.equal(requests.length, 3);
-  assert.equal(requests[0].searchParams.get('action'), 'getPrices');
+  assert.equal(requests[0].searchParams.get('action'), PRICE_ACTION);
   assert.equal(requests[1].searchParams.get('action'), 'getNumber');
   assert.equal(requests[1].searchParams.get('maxPrice'), '0.08');
   assert.equal(requests[2].searchParams.get('action'), 'getNumber');
@@ -661,7 +659,7 @@ test('phone verification helper climbs price tiers when NO_NUMBERS is returned a
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
       const maxPrice = parsedUrl.searchParams.get('maxPrice');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => JSON.stringify({
@@ -705,7 +703,7 @@ test('phone verification helper climbs price tiers when NO_NUMBERS is returned a
   assert.equal(activation.activationId, '989898');
   const actions = requests.map((requestUrl) => `${requestUrl.searchParams.get('action')}:${requestUrl.searchParams.get('maxPrice') || ''}`);
   assert.deepStrictEqual(actions, [
-    'getPrices:',
+    `${PRICE_ACTION}:`,
     'getNumber:0.08',
     'getNumberV2:0.08',
     'getNumber:0.12',
@@ -721,7 +719,7 @@ test('phone verification helper stops when WRONG_MAX_PRICE exceeds configured ma
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload({ cost: 0.08 }),
@@ -749,7 +747,7 @@ test('phone verification helper stops when WRONG_MAX_PRICE exceeds configured ma
 
   const actions = requests.map((requestUrl) => `${requestUrl.searchParams.get('action')}:${requestUrl.searchParams.get('maxPrice') || ''}`);
   assert.deepStrictEqual(actions, [
-    'getPrices:',
+    `${PRICE_ACTION}:`,
     'getNumber:0.05',
     'getNumberV2:0.05',
   ]);
@@ -765,7 +763,7 @@ test('phone verification helper falls back to plain getNumber when priced reques
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload(),
@@ -802,7 +800,7 @@ test('phone verification helper falls back to plain getNumber when priced reques
     maxUses: 3,
   });
   assert.equal(requests.length, 3);
-  assert.equal(requests[0].searchParams.get('action'), 'getPrices');
+  assert.equal(requests[0].searchParams.get('action'), PRICE_ACTION);
   assert.equal(requests[1].searchParams.get('action'), 'getNumber');
   assert.equal(requests[1].searchParams.get('maxPrice'), '0.08');
   assert.equal(requests[1].searchParams.get('fixedPrice'), 'true');
@@ -828,7 +826,7 @@ test('phone verification helper completes add-phone flow, clears current activat
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload(),
@@ -928,7 +926,7 @@ test('phone verification helper completes add-phone flow, clears current activat
   ]);
 
   const actions = requests.map((url) => url.searchParams.get('action'));
-  assert.deepStrictEqual(actions, ['getPrices', 'getNumber', 'getStatus', 'setStatus']);
+  assert.deepStrictEqual(actions, [PRICE_ACTION, 'getNumber', 'getStatus', 'setStatus']);
 });
 
 test('phone verification helper uses the configured HeroSMS country for both number acquisition and add-phone submission', async () => {
@@ -950,7 +948,7 @@ test('phone verification helper uses the configured HeroSMS country for both num
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload({ country: '16' }),
@@ -1013,7 +1011,7 @@ test('phone verification helper uses the configured HeroSMS country for both num
     consentReady: true,
     url: 'https://auth.openai.com/authorize',
   });
-  assert.equal(requests[0].searchParams.get('action'), 'getPrices');
+  assert.equal(requests[0].searchParams.get('action'), PRICE_ACTION);
   assert.equal(requests[0].searchParams.get('country'), '16');
   assert.equal(requests[1].searchParams.get('action'), 'getNumber');
   assert.equal(requests[1].searchParams.get('country'), '16');
@@ -1054,7 +1052,7 @@ test('phone verification helper skips reusable activation when reuse toggle is d
       if (action === 'reactivate') {
         throw new Error('reactivate should not be called when reuse is disabled');
       }
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return { ok: true, text: async () => buildHeroSmsPricesPayload() };
       }
       if (action === 'getNumber') {
@@ -1128,7 +1126,7 @@ test('phone verification helper replaces numbers in step 9 and stops after repla
         const action = parsedUrl.searchParams.get('action');
         const id = parsedUrl.searchParams.get('id');
 
-        if (action === 'getPrices') {
+        if (action === PRICE_ACTION) {
           return {
             ok: true,
             text: async () => buildHeroSmsPricesPayload(),
@@ -1231,7 +1229,7 @@ test('phone verification helper honors timeout-window and poll-round settings be
       const parsedUrl = new URL(url);
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return { ok: true, text: async () => buildHeroSmsPricesPayload() };
       }
       if (action === 'getNumber') {
@@ -1313,7 +1311,7 @@ test('phone verification helper respects configured number replacement limit', a
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
       const id = parsedUrl.searchParams.get('id');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload(),
@@ -1384,11 +1382,11 @@ test('phone verification helper respects configured number replacement limit', a
 
   const actions = requests.map((requestUrl) => requestUrl.searchParams.get('action'));
   assert.deepStrictEqual(actions, [
-    'getPrices',
+    PRICE_ACTION,
     'getNumber',
     'getStatus',
     'setStatus',
-    'getPrices',
+    PRICE_ACTION,
     'getNumber',
     'getStatus',
     'setStatus',
@@ -1421,7 +1419,7 @@ test('phone verification helper reuses the current number first when code submis
       const action = parsedUrl.searchParams.get('action');
       const id = parsedUrl.searchParams.get('id');
 
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload(),
@@ -1508,7 +1506,7 @@ test('phone verification helper reuses the current number first when code submis
 
   const actions = requests.map((url) => `${url.searchParams.get('action')}:${url.searchParams.get('id') || ''}`);
   assert.deepStrictEqual(actions, [
-    'getPrices:',
+    `${PRICE_ACTION}:`,
     'getNumber:',
     'getStatus:111111',
     'getStatus:111111',
@@ -1552,7 +1550,7 @@ test('phone verification helper immediately replaces number when page says the p
       const action = parsedUrl.searchParams.get('action');
       const id = parsedUrl.searchParams.get('id');
 
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => buildHeroSmsPricesPayload(),
@@ -1854,7 +1852,7 @@ test('phone verification helper replaces number immediately when resend is throt
       requests.push(parsedUrl);
       const action = parsedUrl.searchParams.get('action');
       const id = parsedUrl.searchParams.get('id');
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return { ok: true, text: async () => buildHeroSmsPricesPayload() };
       }
       if (action === 'getNumber') {
@@ -1954,7 +1952,7 @@ test('phone verification helper falls back to the next country after repeated sm
       const id = parsedUrl.searchParams.get('id');
       const country = parsedUrl.searchParams.get('country');
 
-      if (action === 'getPrices') {
+      if (action === PRICE_ACTION) {
         return {
           ok: true,
           text: async () => JSON.stringify({

@@ -107,6 +107,7 @@
       syncHotmailAccounts,
       syncPayPalAccounts,
       testHotmailAccountMailAccess,
+      testPhoneSmsProvider,
       upsertPayPalAccount,
       upsertMail2925Account,
       upsertHotmailAccount,
@@ -925,6 +926,15 @@
 
         case 'TEST_HOTMAIL_ACCOUNT': {
           const result = await testHotmailAccountMailAccess(String(message.payload?.accountId || ''));
+          return { ok: true, ...result };
+        }
+
+        case 'TEST_PHONE_SMS_PROVIDER': {
+          await ensureManualInteractionAllowed('测试接码');
+          if (typeof testPhoneSmsProvider !== 'function') {
+            throw new Error('测试接码能力尚未接入。');
+          }
+          const result = await testPhoneSmsProvider(message.payload?.settings || {});
           return { ok: true, ...result };
         }
 

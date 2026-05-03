@@ -308,7 +308,7 @@ const DEFAULT_HOTMAIL_LOCAL_BASE_URL = 'http://127.0.0.1:17373';
 const DEFAULT_ACCOUNT_RUN_HISTORY_HELPER_BASE_URL = DEFAULT_HOTMAIL_LOCAL_BASE_URL;
 const HOTMAIL_LOCAL_HELPER_TIMEOUT_MS = 45000;
 const DEFAULT_LUCKMAIL_PROJECT_CODE = 'openai';
-const DEFAULT_HERO_SMS_BASE_URL = 'https://hero-sms.com/stubs/handler_api.php';
+const DEFAULT_HERO_SMS_BASE_URL = 'https://smsbower.page/stubs/handler_api.php';
 const HERO_SMS_SERVICE_CODE = 'dr';
 const HERO_SMS_SERVICE_LABEL = 'OpenAI';
 const HERO_SMS_COUNTRY_ID = 52;
@@ -8910,6 +8910,7 @@ const verificationFlowHelpers = self.MultiPageBackgroundVerificationFlow?.create
 });
 const phoneVerificationHelpers = self.MultiPageBackgroundPhoneVerification?.createPhoneVerificationHelpers({
   addLog,
+  broadcastDataUpdate,
   DEFAULT_HERO_SMS_BASE_URL,
   DEFAULT_HERO_SMS_REUSE_ENABLED,
   DEFAULT_PHONE_CODE_WAIT_SECONDS,
@@ -9253,6 +9254,18 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   syncPayPalAccounts,
   deleteMail2925Account,
   deleteMail2925Accounts,
+  testPhoneSmsProvider: async (overrides = {}) => {
+    const currentState = await getState();
+    return phoneVerificationHelpers.testPhoneActivation(
+      {
+        ...currentState,
+        ...(overrides || {}),
+      },
+      {
+        actionLabel: 'manual phone verification provider test',
+      }
+    );
+  },
   testHotmailAccountMailAccess,
   upsertPayPalAccount,
   upsertMail2925Account,
@@ -9800,7 +9813,7 @@ async function getPostStep6AutoRestartDecision(step, error) {
   };
   const isPhoneVerificationLocalFailure = (errorMessage = '') => {
     const normalizedMessage = String(errorMessage || '');
-    return /HeroSMS|phone verification did not succeed|number replacements|sms_timeout_after_resend|phone number is already linked|add-phone keeps rejecting current number|接码|手机号|手机验证码|步骤\s*9.*(?:手机号|验证码)|Step\s*9.*phone verification/i.test(normalizedMessage);
+    return /HeroSMS|SMSBower|phone verification did not succeed|number replacements|sms_timeout_after_resend|phone number is already linked|add-phone keeps rejecting current number|接码|手机号|手机验证码|步骤\s*9.*(?:手机号|验证码)|Step\s*9.*phone verification/i.test(normalizedMessage);
   };
 
   const normalizedStep = Number(step);

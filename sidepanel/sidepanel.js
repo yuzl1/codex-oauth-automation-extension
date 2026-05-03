@@ -326,8 +326,10 @@ const selectHeroSmsAcquirePriority = document.getElementById('select-hero-sms-ac
 const heroSmsCountryMenuShell = document.getElementById('hero-sms-country-menu-shell');
 const btnHeroSmsCountryMenu = document.getElementById('btn-hero-sms-country-menu');
 const heroSmsCountryMenu = document.getElementById('hero-sms-country-menu');
+const btnHeroSmsRefreshCountries = document.getElementById('btn-hero-sms-refresh-countries');
 const btnHeroSmsCountryClear = document.getElementById('btn-hero-sms-country-clear');
 const btnHeroSmsPricePreview = document.getElementById('btn-hero-sms-price-preview');
+const btnHeroSmsTest = document.getElementById('btn-hero-sms-test');
 const displayHeroSmsPlatform = document.getElementById('display-hero-sms-platform');
 const displayHeroSmsCurrentNumber = document.getElementById('display-hero-sms-current-number');
 const displayHeroSmsPriceTiers = document.getElementById('display-hero-sms-price-tiers');
@@ -2998,7 +3000,11 @@ function collectHeroSmsPriceEntriesForPreview(payload, entries = []) {
     return entries;
   }
 
-  const cost = normalizeHeroSmsPriceForPreview(payload.cost);
+  const cost = normalizeHeroSmsPriceForPreview(
+    payload.cost !== undefined && payload.cost !== null
+      ? payload.cost
+      : payload.price
+  );
   if (cost !== null) {
     const count = Number(payload.count);
     const physicalCount = Number(payload.physicalCount);
@@ -3113,7 +3119,7 @@ function updateHeroSmsPlatformDisplay() {
   if (!displayHeroSmsPlatform) {
     return;
   }
-  displayHeroSmsPlatform.textContent = 'HeroSMS / OpenAI';
+  displayHeroSmsPlatform.textContent = 'SMSBower / OpenAI';
 }
 
 function getHeroSmsCountryLabelById(id) {
@@ -3398,11 +3404,13 @@ function updateHeroSmsRuntimeDisplay(state = {}) {
   }
 }
 
-async function loadHeroSmsCountries() {
+async function loadHeroSmsCountries(options = {}) {
   const countrySelect = selectHeroSmsCountry || selectHeroSmsCountryFallback;
   if (!countrySelect) {
     return;
   }
+  const suppressMissingApiKeyToast = options.suppressMissingApiKeyToast !== false;
+  const suppressFetchFailureToast = Boolean(options.suppressFetchFailureToast);
 
   const previousSelectionOrder = [...heroSmsCountrySelectionOrder];
   const previousSelectedIds = previousSelectionOrder.length
@@ -3428,10 +3436,49 @@ async function loadHeroSmsCountries() {
     });
   };
 
+  const applyFallbackItems = () => {
+    const fallbackItems = HERO_SMS_FALLBACK_COUNTRY_ITEMS
+      .map((item) => {
+        const id = normalizeHeroSmsCountryId(item.id);
+        const label = buildHeroSmsCountryDisplayLabel(item);
+        return {
+          id,
+          label: String(label || '').trim() || `Country #${id}`,
+          searchText: buildHeroSmsCountrySearchText(item, label, String(id)),
+        };
+      })
+      .filter((item) => item.id > 0);
+    if (!fallbackItems.some((item) => item.id === DEFAULT_HERO_SMS_COUNTRY_ID)) {
+      fallbackItems.unshift({
+        id: DEFAULT_HERO_SMS_COUNTRY_ID,
+        label: DEFAULT_HERO_SMS_COUNTRY_LABEL,
+        searchText: `${DEFAULT_HERO_SMS_COUNTRY_LABEL} ${DEFAULT_HERO_SMS_COUNTRY_ID}`,
+      });
+    }
+    applyOptions(fallbackItems, selectHeroSmsCountry);
+    applyOptions(fallbackItems, selectHeroSmsCountryFallback);
+    heroSmsCountrySearchTextById.clear();
+    fallbackItems.forEach((entry) => {
+      heroSmsCountrySearchTextById.set(String(entry.id), entry.searchText);
+    });
+  };
+
+  const apiKey = String(inputHeroSmsApiKey?.value || latestState?.heroSmsApiKey || '').trim();
+
   try {
+    if (!apiKey) {
+      applyFallbackItems();
+      if (!suppressMissingApiKeyToast && typeof showToast === 'function') {
+        showToast('未填写 SMSBower API Key，国家列表暂使用内置选项。', 'info', 2200);
+      }
+      throw new Error('__USE_FALLBACK_ONLY__');
+    }
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch('https://hero-sms.com/stubs/handler_api.php?action=getCountries', {
+    const url = new URL('https://smsbower.page/stubs/handler_api.php');
+    url.searchParams.set('action', 'getCountries');
+    url.searchParams.set('api_key', apiKey);
+    const response = await fetch(url.toString(), {
       signal: controller.signal,
       cache: 'no-store',
     });
@@ -3466,33 +3513,14 @@ async function loadHeroSmsCountries() {
     applyOptions(optionItems, selectHeroSmsCountry);
     applyOptions(optionItems, selectHeroSmsCountryFallback);
   } catch (error) {
-    console.warn('Failed to load HeroSMS countries:', error);
-    const fallbackItems = HERO_SMS_FALLBACK_COUNTRY_ITEMS
-      .map((item) => {
-        const id = normalizeHeroSmsCountryId(item.id);
-        const label = buildHeroSmsCountryDisplayLabel(item);
-        return {
-          id,
-          label: String(label || '').trim() || `Country #${id}`,
-          searchText: buildHeroSmsCountrySearchText(item, label, String(id)),
-        };
-      })
-      .filter((item) => item.id > 0);
-    if (!fallbackItems.some((item) => item.id === DEFAULT_HERO_SMS_COUNTRY_ID)) {
-      fallbackItems.unshift({
-        id: DEFAULT_HERO_SMS_COUNTRY_ID,
-        label: DEFAULT_HERO_SMS_COUNTRY_LABEL,
-        searchText: `${DEFAULT_HERO_SMS_COUNTRY_LABEL} ${DEFAULT_HERO_SMS_COUNTRY_ID}`,
-      });
-    }
-    applyOptions(fallbackItems, selectHeroSmsCountry);
-    applyOptions(fallbackItems, selectHeroSmsCountryFallback);
-    heroSmsCountrySearchTextById.clear();
-    fallbackItems.forEach((entry) => {
-      heroSmsCountrySearchTextById.set(String(entry.id), entry.searchText);
-    });
-    if (typeof showToast === 'function') {
+    if (String(error?.message || '') === '__USE_FALLBACK_ONLY__') {
+      // The local fallback list has already been applied.
+    } else {
+    console.warn('Failed to load SMSBower countries:', error);
+      applyFallbackItems();
+      if (!suppressFetchFailureToast && typeof showToast === 'function') {
       showToast(`国家列表加载失败：${normalizeHeroSmsFetchErrorMessage(error)}（已切换为内置国家列表）`, 'warn', 2800);
+      }
     }
   }
   const availableIds = new Set(Array.from(countrySelect.options).map((option) => String(option.value)));
@@ -3552,8 +3580,8 @@ async function previewHeroSmsPriceTiers() {
       `Country #${countryId}`
     );
     try {
-      const url = new URL('https://hero-sms.com/stubs/handler_api.php');
-      url.searchParams.set('action', 'getPrices');
+      const url = new URL('https://smsbower.page/stubs/handler_api.php');
+      url.searchParams.set('action', 'getPricesV3');
       url.searchParams.set('service', 'dr');
       url.searchParams.set('country', String(countryId));
       if (apiKey) {
@@ -3606,6 +3634,19 @@ async function previewHeroSmsPriceTiers() {
   }
 
   displayHeroSmsPriceTiers.textContent = previews.join('\n') || '未获取';
+}
+
+async function testHeroSmsPhoneActivation() {
+  const settings = collectSettingsPayload();
+  const response = await chrome.runtime.sendMessage({
+    type: 'TEST_PHONE_SMS_PROVIDER',
+    source: 'sidepanel',
+    payload: { settings },
+  });
+  if (response?.error) {
+    throw new Error(response.error);
+  }
+  return response || {};
 }
 
 function getSelectedLocalCpaStep9Mode() {
@@ -7831,7 +7872,28 @@ inputHeroSmsApiKey?.addEventListener('input', () => {
   scheduleSettingsAutoSave();
 });
 inputHeroSmsApiKey?.addEventListener('blur', () => {
-  saveSettings({ silent: true }).catch(() => { });
+  saveSettings({ silent: true })
+    .then(() => loadHeroSmsCountries({ suppressMissingApiKeyToast: true }))
+    .catch(() => { });
+});
+
+btnHeroSmsRefreshCountries?.addEventListener('click', async () => {
+  try {
+    await loadHeroSmsCountries({
+      suppressMissingApiKeyToast: false,
+      suppressFetchFailureToast: false,
+    });
+    if (String(inputHeroSmsApiKey?.value || latestState?.heroSmsApiKey || '').trim() && typeof showToast === 'function') {
+      showToast('已刷新 SMSBower 国家列表。', 'success', 1800);
+    }
+  } catch (error) {
+    if (String(error?.message || '') === '__USE_FALLBACK_ONLY__') {
+      return;
+    }
+    if (typeof showToast === 'function') {
+      showToast(`国家列表刷新失败：${error?.message || error}`, 'warn', 2600);
+    }
+  }
 });
 
 inputHeroSmsReuseEnabled?.addEventListener('change', () => {
@@ -7863,6 +7925,34 @@ btnHeroSmsPricePreview?.addEventListener('click', async () => {
     if (typeof showToast === 'function') {
       showToast(`价格预览失败：${error?.message || error}`, 'warn', 2200);
     }
+  }
+});
+
+btnHeroSmsTest?.addEventListener('click', async () => {
+  const previousDisabled = Boolean(btnHeroSmsTest.disabled);
+  btnHeroSmsTest.disabled = true;
+  if (typeof showToast === 'function') {
+    showToast('开始测试接码。拿号成功后会持续轮询验证码，请在超时前触发短信发送。', 'info', 2800);
+  }
+  try {
+    const result = await testHeroSmsPhoneActivation();
+    const phoneNumber = String(result?.activation?.phoneNumber || '').trim();
+    const code = String(result?.code || '').trim();
+    if (typeof showToast === 'function') {
+      showToast(
+        code
+          ? `测试接码成功：${phoneNumber || '当前号码'} / 验证码 ${code}`
+          : '测试接码已完成。',
+        'success',
+        4200
+      );
+    }
+  } catch (error) {
+    if (typeof showToast === 'function') {
+      showToast(`测试接码失败：${error?.message || error}`, 'warn', 3600);
+    }
+  } finally {
+    btnHeroSmsTest.disabled = previousDisabled;
   }
 });
 
@@ -8600,10 +8690,12 @@ setMail2925Mode(DEFAULT_MAIL_2925_MODE);
 initializeReleaseInfo().catch((err) => {
   console.error('Failed to initialize release info:', err);
 });
-loadHeroSmsCountries().catch((err) => {
-  console.error('Failed to load HeroSMS countries:', err);
+loadHeroSmsCountries({ suppressMissingApiKeyToast: true, suppressFetchFailureToast: true }).catch((err) => {
+  console.error('Failed to load SMSBower countries:', err);
 }).finally(() => {
   return restoreState().then(() => {
+    return loadHeroSmsCountries({ suppressMissingApiKeyToast: true });
+  }).then(() => {
     syncPasswordToggleLabel();
     syncVpsUrlToggleLabel();
     syncVpsPasswordToggleLabel();

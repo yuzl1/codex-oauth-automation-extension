@@ -4,6 +4,7 @@
   function createPhoneVerificationHelpers(deps = {}) {
     const {
       addLog,
+      broadcastDataUpdate,
       ensureStep8SignupPageReady,
       fetchImpl = (...args) => fetch(...args),
       getOAuthFlowStepTimeoutMs,
@@ -12,7 +13,7 @@
       setState,
       sleepWithStop,
       throwIfStopped,
-      DEFAULT_HERO_SMS_BASE_URL = 'https://hero-sms.com/stubs/handler_api.php',
+      DEFAULT_HERO_SMS_BASE_URL = 'https://smsbower.page/stubs/handler_api.php',
       DEFAULT_HERO_SMS_REUSE_ENABLED = true,
       HERO_SMS_COUNTRY_ID = 52,
       HERO_SMS_COUNTRY_LABEL = 'Thailand',
@@ -32,6 +33,8 @@
     const HERO_SMS_LAST_PRICE_COUNTRY_LABEL_KEY = 'heroSmsLastPriceCountryLabel';
     const HERO_SMS_LAST_PRICE_USER_LIMIT_KEY = 'heroSmsLastPriceUserLimit';
     const HERO_SMS_LAST_PRICE_AT_KEY = 'heroSmsLastPriceAt';
+    const PHONE_SMS_PROVIDER_NAME = 'SMSBower';
+    const PHONE_SMS_PRICE_ACTION = 'getPricesV3';
     const PHONE_CODE_WAIT_SECONDS_MIN = 15;
     const PHONE_CODE_WAIT_SECONDS_MAX = 300;
     const PHONE_CODE_TIMEOUT_WINDOWS_MIN = 1;
@@ -366,7 +369,7 @@
     }
 
     function buildPhoneCodeTimeoutError(lastResponse = '') {
-      const suffix = lastResponse ? ` Last HeroSMS status: ${lastResponse}` : '';
+      const suffix = lastResponse ? ` Last ${PHONE_SMS_PROVIDER_NAME} status: ${lastResponse}` : '';
       return new Error(`${PHONE_CODE_TIMEOUT_ERROR_PREFIX}Timed out waiting for the phone verification code.${suffix}`);
     }
 
@@ -450,12 +453,24 @@
     function resolvePhoneConfig(state = {}) {
       const apiKey = normalizeApiKey(state.heroSmsApiKey);
       if (!apiKey) {
-        throw new Error('HeroSMS API key is missing. Save it in the side panel before running the phone flow.');
+        throw new Error(`${PHONE_SMS_PROVIDER_NAME} API key is missing. Save it in the side panel before running the phone flow.`);
       }
       return {
         apiKey,
         baseUrl: normalizeUrl(state.heroSmsBaseUrl, DEFAULT_HERO_SMS_BASE_URL),
       };
+    }
+
+    async function setAndBroadcastState(updates = {}) {
+      if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+        return;
+      }
+      if (typeof setState === 'function') {
+        await setState(updates);
+      }
+      if (typeof broadcastDataUpdate === 'function') {
+        broadcastDataUpdate(updates);
+      }
     }
 
     function parseActivationPayload(payload, fallback = null) {
@@ -523,7 +538,11 @@
         return candidates;
       }
 
-      const cost = normalizeHeroSmsPrice(payload.cost);
+      const cost = normalizeHeroSmsPrice(
+        payload.cost !== undefined && payload.cost !== null
+          ? payload.cost
+          : payload.price
+      );
       if (cost !== null) {
         const count = Number(payload.count);
         const physicalCount = Number(payload.physicalCount);
@@ -594,10 +613,10 @@
       for (let attempt = 1; attempt <= DEFAULT_PHONE_PRICE_LOOKUP_ATTEMPTS; attempt += 1) {
         try {
           const payload = await fetchHeroSmsPayload(config, {
-            action: 'getPrices',
+            action: PHONE_SMS_PRICE_ACTION,
             service: HERO_SMS_SERVICE_CODE,
             country: countryConfig.id,
-          }, 'HeroSMS getPrices');
+          }, `${PHONE_SMS_PROVIDER_NAME} ${PHONE_SMS_PRICE_ACTION}`);
           const price = findLowestHeroSmsPrice(payload);
           if (price !== null) {
             return price;
@@ -619,7 +638,7 @@
       const userLimit = pricePlan?.userLimit === null || pricePlan?.userLimit === undefined
         ? ''
         : String(pricePlan.userLimit);
-      await setState({
+      await setAndBroadcastState({
         [HERO_SMS_LAST_PRICE_TIERS_KEY]: prices,
         [HERO_SMS_LAST_PRICE_COUNTRY_ID_KEY]: normalizeCountryId(countryConfig?.id, 0),
         [HERO_SMS_LAST_PRICE_COUNTRY_LABEL_KEY]: normalizeCountryLabel(countryConfig?.label, HERO_SMS_COUNTRY_LABEL),
@@ -635,10 +654,10 @@
       for (let attempt = 1; attempt <= DEFAULT_PHONE_PRICE_LOOKUP_ATTEMPTS; attempt += 1) {
         try {
           const payload = await fetchHeroSmsPayload(config, {
-            action: 'getPrices',
+            action: PHONE_SMS_PRICE_ACTION,
             service: HERO_SMS_SERVICE_CODE,
             country: countryConfig.id,
-          }, 'HeroSMS getPrices');
+          }, `${PHONE_SMS_PROVIDER_NAME} ${PHONE_SMS_PRICE_ACTION}`);
           priceCandidates = buildSortedUniquePriceCandidates(
             collectHeroSmsPriceCandidates(payload, [])
           );
@@ -683,7 +702,7 @@
         query.maxPrice = options.maxPrice;
         query.fixedPrice = 'true';
       }
-      return fetchHeroSmsPayload(config, query, `HeroSMS ${action}`);
+      return fetchHeroSmsPayload(config, query, `${PHONE_SMS_PROVIDER_NAME} ${action}`);
     }
 
     async function requestPhoneActivationWithPrice(config, countryConfig, action, maxPrice, options = {}) {
@@ -707,7 +726,7 @@
           ) {
             if (userLimit !== null && updatedMaxPrice > userLimit) {
               throw new Error(
-                `HeroSMS ${action} failed: WRONG_MAX_PRICE requires ${updatedMaxPrice}, which exceeds configured maxPrice=${userLimit}.`
+                `${PHONE_SMS_PROVIDER_NAME} ${action} failed: WRONG_MAX_PRICE requires ${updatedMaxPrice}, which exceeds configured maxPrice=${userLimit}.`
               );
             }
             nextMaxPrice = updatedMaxPrice;
@@ -768,7 +787,7 @@
       for (let round = 1; round <= maxAcquireRounds; round += 1) {
         if (maxAcquireRounds > 1) {
           await addLog(
-            `Step 9: HeroSMS acquiring phone number (round ${round}/${maxAcquireRounds})...`,
+            `Step 9: ${PHONE_SMS_PROVIDER_NAME} acquiring phone number (round ${round}/${maxAcquireRounds})...`,
             'info'
           );
         }
@@ -819,9 +838,8 @@
 
         for (const attempt of countryAttempts) {
           const countryConfig = attempt.countryConfig;
-          const buildFallbackActivation = (requestAction) => ({
+          const buildFallbackActivation = () => ({
             countryId: countryConfig.id,
-            ...(requestAction === 'getNumberV2' ? { statusAction: 'getStatusV2' } : {}),
           });
           const pricePlan = attempt.pricePlan || await resolvePhoneActivationPricePlan(config, countryConfig, state);
           let noNumbersObservedInCountry = false;
@@ -851,14 +869,14 @@
                   continue;
                 }
                 if (isHeroSmsTerminalError(payload)) {
-                  throw new Error(`HeroSMS ${requestAction} failed: ${payloadText || 'empty response'}`);
+                  throw new Error(`${PHONE_SMS_PROVIDER_NAME} ${requestAction} failed: ${payloadText || 'empty response'}`);
                 }
                 lastFailureText = payloadText || lastFailureText;
-                lastError = new Error(`HeroSMS ${requestAction} failed: ${payloadText || 'empty response'}`);
+                lastError = new Error(`${PHONE_SMS_PROVIDER_NAME} ${requestAction} failed: ${payloadText || 'empty response'}`);
               } catch (error) {
                 const payloadOrMessage = error?.payload || error?.message;
                 if (isHeroSmsTerminalError(payloadOrMessage)) {
-                  throw new Error(`HeroSMS ${requestAction} failed: ${describeHeroSmsPayload(payloadOrMessage) || 'empty response'}`);
+                  throw new Error(`${PHONE_SMS_PROVIDER_NAME} ${requestAction} failed: ${describeHeroSmsPayload(payloadOrMessage) || 'empty response'}`);
                 }
                 if (isHeroSmsNoNumbersPayload(payloadOrMessage)) {
                   noNumbersObservedInCountry = true;
@@ -900,7 +918,7 @@
           && retryableNoNumberCountries.length > 0
         ) {
           await addLog(
-            `Step 9: HeroSMS has no available numbers (round ${round}/${maxAcquireRounds}); retrying in ${Math.ceil(retryDelayMs / 1000)}s. Countries: ${retryableNoNumberCountries.join(', ')}.`,
+            `Step 9: ${PHONE_SMS_PROVIDER_NAME} has no available numbers (round ${round}/${maxAcquireRounds}); retrying in ${Math.ceil(retryDelayMs / 1000)}s. Countries: ${retryableNoNumberCountries.join(', ')}.`,
             'warn'
           );
           await sleepWithStop(retryDelayMs);
@@ -912,13 +930,13 @@
 
       if (finalNoNumbersByCountry.length) {
         throw new Error(
-          `HeroSMS no numbers available across ${countryCandidates.length} country candidate(s): ${finalNoNumbersByCountry.join(' | ')}.`
+          `${PHONE_SMS_PROVIDER_NAME} no numbers available across ${countryCandidates.length} country candidate(s): ${finalNoNumbersByCountry.join(' | ')}.`
         );
       }
       if (finalLastError) {
         throw finalLastError;
       }
-      throw new Error(`HeroSMS failed to acquire a phone number. Last status: ${finalLastFailureText || 'unknown'}.`);
+      throw new Error(`${PHONE_SMS_PROVIDER_NAME} failed to acquire a phone number. Last status: ${finalLastFailureText || 'unknown'}.`);
     }
 
     async function reactivatePhoneActivation(state = {}, activation) {
@@ -931,11 +949,11 @@
       const payload = await fetchHeroSmsPayload(config, {
         action: 'reactivate',
         id: normalizedActivation.activationId,
-      }, 'HeroSMS reactivate');
+      }, `${PHONE_SMS_PROVIDER_NAME} reactivate`);
       const nextActivation = parseActivationPayload(payload, normalizedActivation);
       if (!nextActivation) {
         const text = describeHeroSmsPayload(payload);
-        throw new Error(`HeroSMS reactivate failed: ${text || 'empty response'}`);
+        throw new Error(`${PHONE_SMS_PROVIDER_NAME} reactivate failed: ${text || 'empty response'}`);
       }
       return nextActivation;
     }
@@ -955,12 +973,12 @@
     }
 
     async function completePhoneActivation(state = {}, activation) {
-      await setPhoneActivationStatus(state, activation, 6, 'HeroSMS setStatus(6)');
+      await setPhoneActivationStatus(state, activation, 6, `${PHONE_SMS_PROVIDER_NAME} setStatus(6)`);
     }
 
     async function cancelPhoneActivation(state = {}, activation) {
       try {
-        await setPhoneActivationStatus(state, activation, 8, 'HeroSMS setStatus(8)');
+        await setPhoneActivationStatus(state, activation, 8, `${PHONE_SMS_PROVIDER_NAME} setStatus(8)`);
       } catch (_) {
         // Best-effort cleanup.
       }
@@ -968,9 +986,17 @@
 
     async function requestAdditionalPhoneSms(state = {}, activation) {
       try {
-        await setPhoneActivationStatus(state, activation, 3, 'HeroSMS setStatus(3)');
+        await setPhoneActivationStatus(state, activation, 3, `${PHONE_SMS_PROVIDER_NAME} setStatus(3)`);
       } catch (_) {
         // Best-effort request only.
+      }
+    }
+
+    async function markPhoneActivationSmsRequested(state = {}, activation) {
+      try {
+        await setPhoneActivationStatus(state, activation, 1, `${PHONE_SMS_PROVIDER_NAME} setStatus(1)`);
+      } catch (_) {
+        // Some providers treat this as optional. Ignore failures.
       }
     }
 
@@ -1006,7 +1032,7 @@
         const payload = await fetchHeroSmsPayload(config, {
           action: statusAction,
           id: normalizedActivation.activationId,
-        }, `HeroSMS ${statusAction}`);
+        }, `${PHONE_SMS_PROVIDER_NAME} ${statusAction}`);
         const text = describeHeroSmsPayload(payload);
         lastResponse = text;
         pollCount += 1;
@@ -1055,16 +1081,21 @@
           continue;
         }
 
-        if (statusAction === 'getStatusV2' && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        if (
+          payload
+          && typeof payload === 'object'
+          && !Array.isArray(payload)
+          && (payload.verificationType !== undefined || payload.sms || payload.call)
+        ) {
           await sleepWithStop(intervalMs);
           continue;
         }
 
         if (/^STATUS_CANCEL$/i.test(text)) {
-          throw new Error('HeroSMS activation was cancelled before the SMS arrived.');
+          throw new Error(`${PHONE_SMS_PROVIDER_NAME} activation was cancelled before the SMS arrived.`);
         }
 
-        throw new Error(`HeroSMS ${statusAction} failed: ${text || 'empty response'}`);
+        throw new Error(`${PHONE_SMS_PROVIDER_NAME} ${statusAction} failed: ${text || 'empty response'}`);
       }
 
       throw buildPhoneCodeTimeoutError(lastResponse);
@@ -1201,14 +1232,14 @@
     }
 
     async function persistCurrentActivation(activation) {
-      await setState({
+      await setAndBroadcastState({
         [PHONE_ACTIVATION_STATE_KEY]: activation || null,
         [PHONE_VERIFICATION_CODE_STATE_KEY]: '',
       });
     }
 
     async function persistReusableActivation(activation) {
-      await setState({
+      await setAndBroadcastState({
         [REUSABLE_PHONE_ACTIVATION_STATE_KEY]: activation || null,
       });
     }
@@ -1263,7 +1294,7 @@
 
       const activation = await requestPhoneActivation(state, { blockedCountryIds: Array.from(blockedCountryIds) });
       await addLog(
-        `Step 9: acquired ${HERO_SMS_SERVICE_LABEL} / ${resolveCountryLabelById(activation.countryId)} number ${activation.phoneNumber}.`,
+        `Step 9: acquired ${HERO_SMS_SERVICE_LABEL} / ${resolveCountryLabelById(activation.countryId)} number from ${PHONE_SMS_PROVIDER_NAME}: ${activation.phoneNumber}.`,
         'info'
       );
       return activation;
@@ -1314,8 +1345,8 @@
         try {
           const code = await pollPhoneActivationCode(state, normalizedActivation, {
             actionLabel: windowIndex === 1
-              ? 'poll phone verification code from HeroSMS'
-              : 'poll resent phone verification code from HeroSMS',
+              ? `poll phone verification code from ${PHONE_SMS_PROVIDER_NAME}`
+              : `poll resent phone verification code from ${PHONE_SMS_PROVIDER_NAME}`,
             timeoutMs: waitSeconds * 1000,
             intervalMs: pollIntervalSeconds * 1000,
             maxRounds: pollMaxRounds,
@@ -1331,7 +1362,7 @@
               lastLoggedStatus = statusText;
               lastLoggedPollCount = pollCount;
               await addLog(
-                `Step 9: HeroSMS status for ${normalizedActivation.phoneNumber}: ${statusText} (${Math.ceil(elapsedMs / 1000)}s elapsed, round ${pollCount}/${pollMaxRounds}).`,
+                `Step 9: ${PHONE_SMS_PROVIDER_NAME} status for ${normalizedActivation.phoneNumber}: ${statusText} (${Math.ceil(elapsedMs / 1000)}s elapsed, round ${pollCount}/${pollMaxRounds}).`,
                 'info'
               );
             },
@@ -1560,7 +1591,7 @@
           }
 
           if (!activation) {
-            throw new Error('The auth page is waiting for a phone verification code, but no HeroSMS activation is stored for this run.');
+            throw new Error(`The auth page is waiting for a phone verification code, but no ${PHONE_SMS_PROVIDER_NAME} activation is stored for this run.`);
           }
 
           let shouldReplaceNumber = false;
@@ -1576,7 +1607,7 @@
               break;
             }
 
-            await setState({
+            await setAndBroadcastState({
               [PHONE_VERIFICATION_CODE_STATE_KEY]: String(codeResult.code || '').trim(),
             });
             await addLog(`Step 9: received phone verification code ${codeResult.code}.`, 'info');
@@ -1707,12 +1738,90 @@
       }
     }
 
+    async function testPhoneActivation(state = {}, options = {}) {
+      const runtimeState = typeof getState === 'function'
+        ? await getState()
+        : {};
+      const mergedState = {
+        ...(runtimeState || {}),
+        ...(state || {}),
+      };
+      const waitSeconds = normalizePhoneCodeWaitSeconds(mergedState?.phoneCodeWaitSeconds);
+      const timeoutWindows = normalizePhoneCodeTimeoutWindows(mergedState?.phoneCodeTimeoutWindows);
+      const pollIntervalSeconds = normalizePhoneCodePollIntervalSeconds(mergedState?.phoneCodePollIntervalSeconds);
+      const pollMaxRounds = normalizePhoneCodePollMaxRounds(mergedState?.phoneCodePollMaxRounds);
+      const timeoutMs = Math.max(1000, waitSeconds * timeoutWindows * 1000);
+      const maxRounds = Math.max(1, pollMaxRounds * timeoutWindows);
+      const actionLabel = String(options.actionLabel || '').trim() || `${PHONE_SMS_PROVIDER_NAME} test poll`;
+      let activation = null;
+      let completed = false;
+      let latestCode = '';
+
+      await setAndBroadcastState({
+        [PHONE_ACTIVATION_STATE_KEY]: null,
+        [PHONE_VERIFICATION_CODE_STATE_KEY]: '',
+      });
+
+      try {
+        activation = await acquirePhoneActivation(mergedState, {
+          blockedCountryIds: Array.isArray(options.blockedCountryIds) ? options.blockedCountryIds : [],
+        });
+        await setAndBroadcastState({
+          [PHONE_ACTIVATION_STATE_KEY]: activation,
+          [PHONE_VERIFICATION_CODE_STATE_KEY]: '',
+        });
+        await markPhoneActivationSmsRequested(mergedState, activation);
+
+        await addLog(
+          `测试接码：已获取 ${PHONE_SMS_PROVIDER_NAME} 号码 ${activation.phoneNumber}，已通知平台开始等待短信；请立刻用这个号码触发一次验证码发送，并在 ${waitSeconds * timeoutWindows} 秒内观察是否收到验证码。`,
+          'info'
+        );
+
+        latestCode = await pollPhoneActivationCode(mergedState, activation, {
+          actionLabel,
+          timeoutMs,
+          intervalMs: pollIntervalSeconds * 1000,
+          maxRounds,
+        });
+
+        await setAndBroadcastState({
+          [PHONE_VERIFICATION_CODE_STATE_KEY]: String(latestCode || '').trim(),
+        });
+        await completePhoneActivation(mergedState, activation);
+        completed = true;
+        await addLog(`测试接码：${PHONE_SMS_PROVIDER_NAME} 已收到验证码 ${latestCode}。`, 'ok');
+        return {
+          ok: true,
+          activation,
+          code: latestCode,
+        };
+      } catch (error) {
+        let sanitizedError = sanitizePhoneRestartStep7Error(sanitizePhoneCodeTimeoutError(error));
+        if (isPhoneCodeTimeoutError(error) && activation?.phoneNumber) {
+          sanitizedError = new Error(
+            `测试接码超时：号码 ${activation.phoneNumber} 在等待窗口内未收到短信。当前平台状态仍为 STATUS_WAIT_CODE，这通常表示上游并没有把验证码真正下发到该号码，或平台尚未收到短信。`
+          );
+        }
+        await addLog(`测试接码失败：${sanitizedError.message}`, 'warn');
+        throw sanitizedError;
+      } finally {
+        if (activation && !completed) {
+          await cancelPhoneActivation(mergedState, activation);
+        }
+        await setAndBroadcastState({
+          [PHONE_ACTIVATION_STATE_KEY]: null,
+          ...(!latestCode ? { [PHONE_VERIFICATION_CODE_STATE_KEY]: '' } : {}),
+        });
+      }
+    }
+
     return {
       completePhoneVerificationFlow,
       normalizeActivation,
       pollPhoneActivationCode,
       reactivatePhoneActivation,
       requestPhoneActivation,
+      testPhoneActivation,
     };
   }
 
