@@ -321,3 +321,136 @@ return { collectSettingsPayload };
   assert.equal(payload.heroSmsCountryLabel, 'Thailand');
   assert.deepStrictEqual(payload.heroSmsCountryFallback, [{ id: 16, label: 'United Kingdom' }]);
 });
+
+test('loadHeroSmsCountries accepts SMSBower object payloads keyed by country id', async () => {
+  const api = new Function(`
+const DEFAULT_HERO_SMS_COUNTRY_ID = 52;
+const DEFAULT_HERO_SMS_COUNTRY_LABEL = 'Thailand';
+const HERO_SMS_FALLBACK_COUNTRY_ITEMS = [];
+let latestState = { heroSmsApiKey: 'demo-key' };
+const inputHeroSmsApiKey = { value: 'demo-key' };
+let heroSmsCountrySelectionOrder = [52];
+const heroSmsCountrySearchTextById = new Map();
+const toastMessages = [];
+let lastPlatformLabel = '';
+function createSelect(initialOptions = []) {
+  const select = {
+    options: [],
+    value: '',
+    appendChild(option) {
+      this.options.push(option);
+    },
+  };
+  Object.defineProperty(select, 'innerHTML', {
+    get() {
+      return '';
+    },
+    set(_value) {
+      this.options = [];
+      this.value = '';
+    },
+  });
+  initialOptions.forEach((entry) => {
+    select.options.push({
+      value: String(entry.value),
+      textContent: String(entry.textContent),
+      selected: Boolean(entry.selected),
+    });
+  });
+  return select;
+}
+const selectHeroSmsCountry = createSelect([
+  { value: '52', textContent: 'Thailand', selected: true },
+]);
+const selectHeroSmsCountryFallback = createSelect([
+  { value: '52', textContent: 'Thailand', selected: true },
+]);
+const document = {
+  createElement() {
+    return {
+      value: '',
+      textContent: '',
+      selected: false,
+    };
+  },
+};
+function buildHeroSmsCountryDisplayLabel(country = {}) {
+  const english = String(country?.eng || '').trim();
+  const chinese = String(country?.chn || '').trim();
+  if (chinese && english) {
+    if (chinese.toLowerCase() === english.toLowerCase()) {
+      return english;
+    }
+    return \`\${chinese} (\${english})\`;
+  }
+  return chinese || english;
+}
+function buildHeroSmsCountrySearchText(country = {}, label = '', id = '') {
+  return [label, id, country?.eng, country?.chn, country?.rus]
+    .filter(Boolean)
+    .join(' ');
+}
+function normalizeHeroSmsFetchErrorMessage(error) {
+  return String(error?.message || error || '未知错误');
+}
+function showToast(message, type, duration) {
+  toastMessages.push({ message, type, duration });
+}
+function syncHeroSmsFallbackSelectionOrderFromSelect({ ensureDefault } = {}) {
+  let selected = selectHeroSmsCountry.options.filter((option) => option.selected);
+  if (!selected.length && ensureDefault) {
+    const fallback = selectHeroSmsCountry.options.find((option) => String(option.value) === String(DEFAULT_HERO_SMS_COUNTRY_ID));
+    if (fallback) {
+      fallback.selected = true;
+      selected = [fallback];
+    }
+  }
+  heroSmsCountrySelectionOrder = selected.map((option) => Number(option.value));
+  return selected.map((option) => ({
+    id: Number(option.value),
+    label: option.textContent,
+  }));
+}
+function updateHeroSmsPlatformDisplay(label) {
+  lastPlatformLabel = String(label || '');
+}
+const fetch = async () => ({
+  json: async () => ({
+    "31": { id: "31", eng: "South Africa", chn: "南非" },
+    "52": { id: "52", eng: "Thailand", chn: "泰国" },
+    "16": { id: "16", eng: "United Kingdom", chn: "英国" },
+    "": { id: null, eng: "Faroe Islands", chn: "法罗群岛" },
+  }),
+});
+${extractFunction('normalizeHeroSmsCountryId')}
+${extractFunction('loadHeroSmsCountries')}
+return {
+  loadHeroSmsCountries,
+  selectHeroSmsCountry,
+  selectHeroSmsCountryFallback,
+  heroSmsCountrySearchTextById,
+  getHeroSmsCountrySelectionOrder: () => [...heroSmsCountrySelectionOrder],
+  getToastMessages: () => [...toastMessages],
+  getLastPlatformLabel: () => lastPlatformLabel,
+};
+`)();
+
+  await api.loadHeroSmsCountries({
+    suppressMissingApiKeyToast: false,
+    suppressFetchFailureToast: false,
+  });
+
+  assert.deepStrictEqual(
+    api.selectHeroSmsCountry.options.map((option) => option.value),
+    ['31', '52', '16']
+  );
+  assert.deepStrictEqual(
+    api.selectHeroSmsCountry.options.map((option) => option.textContent),
+    ['南非 (South Africa)', '泰国 (Thailand)', '英国 (United Kingdom)']
+  );
+  assert.deepStrictEqual(api.getHeroSmsCountrySelectionOrder(), [52]);
+  assert.equal(api.selectHeroSmsCountry.options.find((option) => option.value === '52')?.selected, true);
+  assert.equal(api.heroSmsCountrySearchTextById.get('31'), '南非 (South Africa) 31 South Africa 南非');
+  assert.equal(api.getLastPlatformLabel(), '泰国 (Thailand)');
+  assert.deepStrictEqual(api.getToastMessages(), []);
+});

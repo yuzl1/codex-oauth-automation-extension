@@ -3484,7 +3484,17 @@ async function loadHeroSmsCountries(options = {}) {
     });
     clearTimeout(timeoutId);
     const payload = await response.json();
-    const countries = Array.isArray(payload?.value) ? payload.value : (Array.isArray(payload) ? payload : []);
+    const countries = Array.isArray(payload?.value)
+      ? payload.value
+      : (
+        payload?.value && typeof payload.value === 'object'
+          ? Object.values(payload.value)
+          : (
+            Array.isArray(payload)
+              ? payload
+              : (payload && typeof payload === 'object' ? Object.values(payload) : [])
+          )
+      );
     if (!countries.length) {
       throw new Error('empty country list');
     }
@@ -3516,10 +3526,10 @@ async function loadHeroSmsCountries(options = {}) {
     if (String(error?.message || '') === '__USE_FALLBACK_ONLY__') {
       // The local fallback list has already been applied.
     } else {
-    console.warn('Failed to load SMSBower countries:', error);
+      console.warn('Failed to load SMSBower countries:', error);
       applyFallbackItems();
       if (!suppressFetchFailureToast && typeof showToast === 'function') {
-      showToast(`国家列表加载失败：${normalizeHeroSmsFetchErrorMessage(error)}（已切换为内置国家列表）`, 'warn', 2800);
+        showToast(`国家列表加载失败：${normalizeHeroSmsFetchErrorMessage(error)}（已切换为内置国家列表）`, 'warn', 2800);
       }
     }
   }
